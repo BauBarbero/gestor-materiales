@@ -10,8 +10,14 @@ Los controles de edición (Agregar / Editar) solo son visibles para rol ADMIN.
 import customtkinter
 from tkinter import messagebox
 
-from database.queries import obtener_materiales, crear_material, actualizar_material
-from models.material import CATEGORIAS_VALIDAS, ESTADOS_VALIDOS
+from database.queries import (
+    obtener_materiales,
+    crear_material,
+    actualizar_material,
+    obtener_categorias,
+    crear_categoria,
+)
+from models.material import ESTADOS_VALIDOS
 
 # ─── Paleta de colores (coherente con app.py) ─────────────────────────────────
 COLOR_PRIMARIO         = "#1e3a8a"
@@ -46,6 +52,104 @@ _COLUMNAS: list[tuple[str, str, int, str]] = [
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# DIÁLOGO: CREAR NUEVA CATEGORÍA
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _DialogoNuevaCategoria(customtkinter.CTkToplevel):
+    """
+    Ventana modal para crear una nueva categoría personalizada.
+    """
+
+    def __init__(self, master, callback_guardado):
+        super().__init__(master)
+        self.callback_guardado = callback_guardado
+        self.title("Nueva Categoría")
+        self.resizable(False, False)
+        self.grab_set()
+        self._construir_ui()
+        self._centrar_ventana()
+
+    def _construir_ui(self):
+        marco = customtkinter.CTkFrame(self, fg_color=COLOR_BLANCO, corner_radius=16)
+        marco.pack(padx=24, pady=24, fill="both", expand=True)
+
+        customtkinter.CTkLabel(
+            marco, text="🏷️  Nueva Categoría",
+            font=customtkinter.CTkFont(size=16, weight="bold"),
+            text_color=COLOR_TEXTO_OSCURO
+        ).pack(pady=(20, 14), padx=28)
+
+        customtkinter.CTkLabel(
+            marco, text="Nombre de la categoría:",
+            font=customtkinter.CTkFont(size=12, weight="bold"),
+            text_color=COLOR_TEXTO_OSCURO, anchor="w"
+        ).pack(fill="x", padx=28, pady=(0, 4))
+
+        self.campo_nombre = customtkinter.CTkEntry(
+            marco, width=280, height=42,
+            placeholder_text="Ej: Atletismo, Gimnasia...",
+            font=customtkinter.CTkFont(size=13),
+            fg_color=COLOR_FONDO, border_color=COLOR_BORDE,
+            text_color=COLOR_TEXTO_OSCURO, corner_radius=9
+        )
+        self.campo_nombre.pack(padx=28, pady=(0, 10))
+        self.campo_nombre.bind("<Return>", lambda _: self._guardar())
+
+        self.etiqueta_error = customtkinter.CTkLabel(
+            marco, text="", font=customtkinter.CTkFont(size=11),
+            text_color="#dc2626", height=16
+        )
+        self.etiqueta_error.pack()
+
+        fila_btns = customtkinter.CTkFrame(marco, fg_color="transparent")
+        fila_btns.pack(padx=28, pady=(6, 20), fill="x")
+
+        customtkinter.CTkButton(
+            fila_btns, text="Cancelar",
+            font=customtkinter.CTkFont(size=12),
+            fg_color="transparent", hover_color=COLOR_BORDE,
+            text_color=COLOR_TEXTO_SECUNDARIO,
+            border_width=1, border_color=COLOR_BORDE,
+            height=38, corner_radius=9,
+            command=self.destroy
+        ).pack(side="left", expand=True, fill="x", padx=(0, 6))
+
+        customtkinter.CTkButton(
+            fila_btns, text="Crear Categoría",
+            font=customtkinter.CTkFont(size=12, weight="bold"),
+            fg_color=COLOR_EXITO, hover_color=COLOR_HOVER_EXITO,
+            text_color=COLOR_TEXTO_CLARO,
+            height=38, corner_radius=9,
+            command=self._guardar
+        ).pack(side="left", expand=True, fill="x")
+
+        self.campo_nombre.focus()
+
+    def _guardar(self):
+        nombre = self.campo_nombre.get().strip()
+        if not nombre:
+            self.etiqueta_error.configure(text="El nombre no puede estar vacío.")
+            return
+        try:
+            crear_categoria(nombre)
+        except (ValueError, RuntimeError) as e:
+            self.etiqueta_error.configure(text=str(e))
+            return
+
+        if self.callback_guardado:
+            self.callback_guardado(nombre)
+        self.destroy()
+
+    def _centrar_ventana(self):
+        self.update_idletasks()
+        ancho = self.winfo_reqwidth()
+        alto  = self.winfo_reqheight()
+        x = (self.winfo_screenwidth()  // 2) - (ancho // 2)
+        y = (self.winfo_screenheight() // 2) - (alto  // 2)
+        self.geometry(f"+{x}+{y}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DIÁLOGO: AGREGAR / EDITAR MATERIAL
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -70,6 +174,13 @@ class _DialogoMaterial(customtkinter.CTkToplevel):
 
         self._construir_ui()
         self._centrar_ventana()
+
+    def _obtener_categorias_disponibles(self) -> list[str]:
+        try:
+            cats = obtener_categorias()
+            return cats if cats else ["General"]
+        except Exception:
+            return ["Pelotas", "Conos", "Indumentaria", "Colchonetas"]
 
     # ── Construcción de la UI ─────────────────────────────────────────────────
 
@@ -97,11 +208,15 @@ class _DialogoMaterial(customtkinter.CTkToplevel):
         )
         self.campo_nombre.pack(padx=32, pady=(0, 14))
 
-        # ── Campo: Categoría ──────────────────────────────────────────────────
+        # ── Campo: Categoría (con botón ＋ para crear nueva) ───────────────────
         self._label(marco, "Categoría")
+        fila_cat = customtkinter.CTkFrame(marco, fg_color="transparent")
+        fila_cat.pack(padx=32, pady=(0, 14), fill="x")
+
+        categorias = self._obtener_categorias_disponibles()
         self.combo_categoria = customtkinter.CTkOptionMenu(
-            marco, width=340, height=42,
-            values=CATEGORIAS_VALIDAS,
+            fila_cat, height=42,
+            values=categorias,
             font=customtkinter.CTkFont(size=13),
             fg_color=COLOR_FONDO, button_color=COLOR_PRIMARIO,
             button_hover_color=COLOR_HOVER_BTN,
@@ -110,7 +225,15 @@ class _DialogoMaterial(customtkinter.CTkToplevel):
             dropdown_text_color=COLOR_TEXTO_OSCURO,
             corner_radius=9
         )
-        self.combo_categoria.pack(padx=32, pady=(0, 14))
+        self.combo_categoria.pack(side="left", expand=True, fill="x", padx=(0, 8))
+
+        customtkinter.CTkButton(
+            fila_cat, text="＋", width=42, height=42,
+            font=customtkinter.CTkFont(size=16, weight="bold"),
+            fg_color=COLOR_PRIMARIO, hover_color=COLOR_HOVER_BTN,
+            text_color=COLOR_TEXTO_CLARO, corner_radius=9,
+            command=self._abrir_nueva_categoria
+        ).pack(side="left")
 
         # ── Campo: Stock Total ────────────────────────────────────────────────
         self._label(marco, "Stock total")
@@ -182,6 +305,15 @@ class _DialogoMaterial(customtkinter.CTkToplevel):
             font=customtkinter.CTkFont(size=12, weight="bold"),
             text_color=COLOR_TEXTO_OSCURO, anchor="w"
         ).pack(fill="x", padx=32, pady=(0, 5))
+
+    def _abrir_nueva_categoria(self):
+        _DialogoNuevaCategoria(self, callback_guardado=self._on_categoria_creada)
+
+    def _on_categoria_creada(self, nueva_cat: str = ""):
+        opciones = self._obtener_categorias_disponibles()
+        self.combo_categoria.configure(values=opciones)
+        if nueva_cat and nueva_cat in opciones:
+            self.combo_categoria.set(nueva_cat)
 
     # ── Lógica de guardado ────────────────────────────────────────────────────
 
@@ -411,7 +543,18 @@ class InventoryFrame(customtkinter.CTkFrame):
                 state="disabled",           # Se habilita solo al seleccionar una fila
                 command=self._abrir_dialogo_editar
             )
-            self.btn_editar.pack(side="left", padx=(0, 10))
+            self.btn_editar.pack(side="left", padx=(0, 8))
+
+            customtkinter.CTkButton(
+                lado_der,
+                text="🏷️  Nueva Categoría",
+                font=customtkinter.CTkFont(size=12, weight="bold"),
+                fg_color="#334155",
+                hover_color="#1e293b",
+                text_color=COLOR_TEXTO_CLARO,
+                height=38, corner_radius=9,
+                command=self._abrir_dialogo_nueva_categoria
+            ).pack(side="left", padx=(0, 8))
 
             customtkinter.CTkButton(
                 lado_der,
@@ -465,11 +608,12 @@ class InventoryFrame(customtkinter.CTkFrame):
             text_color=COLOR_TEXTO_OSCURO
         ).pack(side="left", padx=(0, 8), pady=14)
 
+        self._categorias_actuales = self._obtener_lista_categorias()
         self.var_categoria = customtkinter.StringVar(value="Todas")
         self.combo_categoria = customtkinter.CTkOptionMenu(
             barra,
             variable=self.var_categoria,
-            values=["Todas"] + CATEGORIAS_VALIDAS,
+            values=["Todas"] + self._categorias_actuales,
             command=self._on_categoria_cambia,
             width=180, height=38,
             font=customtkinter.CTkFont(size=13),
@@ -569,11 +713,27 @@ class InventoryFrame(customtkinter.CTkFrame):
 
         self._frame_vacio.grid_remove()   # Ocultarlo hasta que sea necesario
 
+    def _obtener_lista_categorias(self) -> list[str]:
+        try:
+            cats = obtener_categorias()
+            return cats if cats else ["General"]
+        except Exception:
+            return ["Pelotas", "Conos", "Indumentaria", "Colchonetas"]
+
+    def _abrir_dialogo_nueva_categoria(self):
+        _DialogoNuevaCategoria(self, callback_guardado=lambda _: self._cargar_datos())
+
     # ── Carga y filtrado de datos ─────────────────────────────────────────────
 
     def _cargar_datos(self):
-        """Recupera todos los materiales de la BD y aplica los filtros activos."""
+        """Recupera categorías y materiales de la BD y aplica los filtros activos."""
         try:
+            self._categorias_actuales = self._obtener_lista_categorias()
+            opciones_cat = ["Todas"] + self._categorias_actuales
+            self.combo_categoria.configure(values=opciones_cat)
+            if self.var_categoria.get() not in opciones_cat:
+                self.var_categoria.set("Todas")
+
             rows = obtener_materiales()
             self._materiales_todos = [dict(r) for r in rows]
         except RuntimeError as e:

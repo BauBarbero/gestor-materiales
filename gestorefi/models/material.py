@@ -33,11 +33,8 @@ class Material:
         """Lanza ValueError si algún campo no cumple las reglas de negocio."""
         if not self.nombre or not self.nombre.strip():
             raise ValueError("El nombre del material no puede estar vacío.")
-        if self.categoria not in CATEGORIAS_VALIDAS:
-            raise ValueError(
-                f"Categoría '{self.categoria}' inválida. "
-                f"Opciones: {CATEGORIAS_VALIDAS}"
-            )
+        if not self.categoria or not self.categoria.strip():
+            raise ValueError("La categoría no puede estar vacía.")
         if self.estado not in ESTADOS_VALIDOS:
             raise ValueError(
                 f"Estado '{self.estado}' inválido. "

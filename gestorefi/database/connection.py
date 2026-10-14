@@ -41,13 +41,20 @@ def _crear_tablas(conn: sqlite3.Connection) -> None:
     """Ejecuta las sentencias DDL para crear todas las tablas si no existen."""
     cursor = conn.cursor()
 
+    # ─── Tabla: categorias ──────────────────────────────────────────────────
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS categorias (
+            id     INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT UNIQUE NOT NULL
+        );
+    """)
+
     # ─── Tabla: materiales ──────────────────────────────────────────────────
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS materiales (
             id               INTEGER PRIMARY KEY AUTOINCREMENT,
             nombre           TEXT    NOT NULL,
-            categoria        TEXT    NOT NULL
-                                CHECK(categoria IN ('Pelotas', 'Conos', 'Indumentaria', 'Colchonetas')),
+            categoria        TEXT    NOT NULL,
             stock_total      INTEGER NOT NULL CHECK(stock_total >= 0),
             stock_disponible INTEGER NOT NULL CHECK(stock_disponible >= 0),
             estado           TEXT    NOT NULL DEFAULT 'Bueno'
@@ -143,7 +150,56 @@ def _insertar_datos_semilla(conn: sqlite3.Connection) -> None:
         )
         print(f"[DB] {len(materiales_semilla)} materiales semilla insertados.")
 
+    # ── Categorías por defecto ───────────────────────────────────────────────
+    cursor.execute("SELECT COUNT(*) FROM categorias;")
+    if cursor.fetchone()[0] == 0:
+        categorias_base = ["Pelotas", "Conos", "Indumentaria", "Colchonetas"]
+        for cat in categorias_base:
+            cursor.execute("INSERT OR IGNORE INTO categorias (nombre) VALUES (?);", (cat,))
+        print("[DB] Categorías base insertadas.")
+
     conn.commit()
+
+
+def _migrar_si_es_necesario(conn: sqlite3.Connection) -> None:
+    """Migra tablas existentes si aún tienen restricciones obsoletas."""
+    cursor = conn.cursor()
+    # 1. Asegurar categorías base en la tabla 'categorias'
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS categorias (
+            id     INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT UNIQUE NOT NULL
+        );
+    """)
+    categorias_base = ["Pelotas", "Conos", "Indumentaria", "Colchonetas"]
+    for cat in categorias_base:
+        cursor.execute("INSERT OR IGNORE INTO categorias (nombre) VALUES (?);", (cat,))
+
+    # 2. Migrar 'materiales' si tiene la restricción CHECK de categorías fija
+    row = cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='materiales';").fetchone()
+    if row and "CHECK(categoria IN" in row[0]:
+        conn.commit()
+        # Conexión dedicada sin claves foráneas para la recreación segura
+        conn_migr = sqlite3.connect(str(DB_PATH))
+        conn_migr.execute("PRAGMA foreign_keys = OFF;")
+        cur_migr = conn_migr.cursor()
+        cur_migr.execute("""
+            CREATE TABLE materiales_temp (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre           TEXT    NOT NULL,
+                categoria        TEXT    NOT NULL,
+                stock_total      INTEGER NOT NULL CHECK(stock_total >= 0),
+                stock_disponible INTEGER NOT NULL CHECK(stock_disponible >= 0),
+                estado           TEXT    NOT NULL DEFAULT 'Bueno'
+                                    CHECK(estado IN ('Nuevo', 'Bueno', 'Gastado', 'Inutilizable'))
+            );
+        """)
+        cur_migr.execute("INSERT INTO materiales_temp SELECT * FROM materiales;")
+        cur_migr.execute("DROP TABLE materiales;")
+        cur_migr.execute("ALTER TABLE materiales_temp RENAME TO materiales;")
+        conn_migr.commit()
+        conn_migr.close()
+        print("[DB] Migración aplicada: 'materiales' ahora admite categorías dinámicas.")
 
 
 def inicializar_base_de_datos() -> None:
@@ -156,6 +212,7 @@ def inicializar_base_de_datos() -> None:
     try:
         conn = get_connection()
         _crear_tablas(conn)
+        _migrar_si_es_necesario(conn)
         _insertar_datos_semilla(conn)
         conn.close()
 

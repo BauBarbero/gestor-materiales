@@ -18,6 +18,7 @@ from database.queries import (
     obtener_materiales,
     registrar_baja,
     obtener_historial_bajas,
+    revertir_baja,
 )
 
 # ─── Paleta de colores institucional ──────────────────────────────────────────
@@ -55,6 +56,7 @@ _COLUMNAS_AUDITORIA: list[tuple[str, int, str]] = [
     ("MOTIVO",            2, "center"),
     ("RESPONSABLE",       2, "center"),
     ("FECHA Y HORA",      2, "center"),
+    ("ACCIÓN",            2, "center"),
 ]
 
 
@@ -63,10 +65,11 @@ class _FilaAuditoria(customtkinter.CTkFrame):
     Representa una fila en el historial de bajas definitivas.
     """
 
-    def __init__(self, master, baja: dict, index: int):
+    def __init__(self, master, baja: dict, index: int, on_anular=None):
         color_base = COLOR_FILA_PAR if index % 2 == 0 else COLOR_FILA_IMPAR
         super().__init__(master, fg_color=color_base, corner_radius=0)
         self.baja = baja
+        self.on_anular = on_anular
 
         pesos = [c[1] for c in _COLUMNAS_AUDITORIA]
         for col_idx, peso in enumerate(pesos):
@@ -128,7 +131,23 @@ class _FilaAuditoria(customtkinter.CTkFrame):
             text_color=COLOR_TEXTO_SECUNDARIO,
             anchor="center"
         )
-        lbl_fecha.grid(row=0, column=4, sticky="ew", padx=(8, 16), pady=11)
+        lbl_fecha.grid(row=0, column=4, sticky="ew", padx=8, pady=11)
+
+        # ── 6. Botón Anular / Revertir ─────────────────────────────────────────
+        if self.on_anular:
+            btn_anular = customtkinter.CTkButton(
+                self,
+                text="↩ Anular",
+                font=customtkinter.CTkFont(size=11, weight="bold"),
+                fg_color="#ef4444",
+                hover_color="#dc2626",
+                text_color=COLOR_TEXTO_CLARO,
+                height=30,
+                width=80,
+                corner_radius=7,
+                command=lambda: self.on_anular(self.baja)
+            )
+            btn_anular.grid(row=0, column=5, padx=(8, 16), pady=6)
 
         # Separador inferior
         sep = customtkinter.CTkFrame(self, fg_color=COLOR_BORDE, height=1, corner_radius=0)
@@ -611,8 +630,43 @@ class AuditFrame(customtkinter.CTkFrame):
         self.frame_vacio.grid_remove()
 
         for idx, baja in enumerate(self._historial_vis):
-            fila = _FilaAuditoria(self.scroll_filas, baja=baja, index=idx)
+            fila = _FilaAuditoria(
+                self.scroll_filas,
+                baja=baja,
+                index=idx,
+                on_anular=self._confirmar_anulacion
+            )
             fila.grid(row=idx, column=0, sticky="ew")
+
+    def _confirmar_anulacion(self, baja: dict):
+        """Pide confirmación y revierte la baja reintegrando el stock."""
+        baja_id = baja.get("id")
+        material = baja.get("material", "Material")
+        cantidad = baja.get("cantidad", 1)
+        motivo = baja.get("motivo", "")
+
+        confirmar = messagebox.askyesno(
+            "Anular Registro de Baja",
+            f"¿Deseás anular este registro de baja por error?\n\n"
+            f"• Material: {material}\n"
+            f"• Cantidad: {cantidad} unidad{'es' if cantidad != 1 else ''}\n"
+            f"• Motivo original: {motivo}\n\n"
+            f"Se reintegrarán automáticamente +{cantidad} u. al stock total y disponible.",
+            parent=self
+        )
+
+        if not confirmar:
+            return
+
+        try:
+            revertir_baja(baja_id)
+        except (ValueError, RuntimeError) as e:
+            messagebox.showerror("Error al anular baja", str(e), parent=self)
+            return
+
+        self._mostrar_estado(f"✓ Baja de '{material}' anulada. Stock reintegrado (+{cantidad} u.).", es_error=False)
+        self._cargar_materiales()
+        self._cargar_historial()
 
     # ── Envío de Baja Definitiva ──────────────────────────────────────────────
 
