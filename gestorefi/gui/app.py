@@ -12,6 +12,7 @@ from tkinter import messagebox
 from gui.inventory_frame import InventoryFrame
 from gui.loans_frame import LoansFrame
 from gui.audit_frame import AuditFrame
+from gui.users_frame import UsersFrame
 
 # ─── Paleta de colores ────────────────────────────────────────────────────────
 COLOR_PRIMARIO        = "#1e3a8a"   # Dark Blue — sidebar
@@ -348,10 +349,7 @@ class App(customtkinter.CTkFrame):
         elif seccion_id == "auditoria":
             return AuditFrame(self._area, self.username, self.rol)
         elif seccion_id == "usuarios":
-            # TODO Fase 5: reemplazar por UsersFrame
-            return _PlaceholderFrame(
-                self._area, "👥  Gestión de Usuarios", "Fase 5"
-            )
+            return UsersFrame(self._area, self.username, self.rol)
         else:
             return _PlaceholderFrame(self._area, "Sección desconocida", "")
 

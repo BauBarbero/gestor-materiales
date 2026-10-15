@@ -73,7 +73,7 @@ def crear_usuario(username: str, password: str, rol: str) -> None:
         conn = get_connection()
         conn.execute(
             "INSERT INTO usuarios (username, password_hash, rol) VALUES (?, ?, ?);",
-            (username, _hash_password(password), rol)
+            (username, hash_password(password), rol)
         )
         conn.commit()
         conn.close()
@@ -81,6 +81,22 @@ def crear_usuario(username: str, password: str, rol: str) -> None:
         raise ValueError(f"El nombre de usuario '{username}' ya existe.")
     except sqlite3.Error as e:
         raise RuntimeError(f"Error al crear usuario: {e}")
+
+
+def cambiar_password(usuario_id: int, nueva_password: str) -> None:
+    """Actualiza la contraseña de un usuario con hash SHA-256 (solo ADMIN)."""
+    if not nueva_password or not nueva_password.strip():
+        raise ValueError("La nueva contraseña no puede estar vacía.")
+    try:
+        conn = get_connection()
+        conn.execute(
+            "UPDATE usuarios SET password_hash = ? WHERE id = ?;",
+            (hash_password(nueva_password), usuario_id)
+        )
+        conn.commit()
+        conn.close()
+    except sqlite3.Error as e:
+        raise RuntimeError(f"Error al cambiar contraseña: {e}")
 
 
 def eliminar_usuario(usuario_id: int) -> None:
@@ -95,8 +111,49 @@ def eliminar_usuario(usuario_id: int) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MATERIALES
+# MATERIALES Y CATEGORÍAS
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def obtener_categorias() -> list[str]:
+    """
+    Retorna la lista ordenada de todas las categorías disponibles.
+    Combina la tabla 'categorias' y cualquier categoría existente en 'materiales'.
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT nombre FROM categorias
+            UNION
+            SELECT DISTINCT categoria AS nombre FROM materiales
+            WHERE categoria IS NOT NULL AND categoria != ''
+            ORDER BY nombre COLLATE NOCASE ASC;
+        """)
+        filas = cursor.fetchall()
+        conn.close()
+        return [f["nombre"] for f in filas if f["nombre"]]
+    except sqlite3.Error as e:
+        raise RuntimeError(f"Error al obtener categorías: {e}")
+
+
+def crear_categoria(nombre: str) -> None:
+    """Registra una nueva categoría en la base de datos (solo ADMIN)."""
+    nombre_limpio = nombre.strip()
+    if not nombre_limpio:
+        raise ValueError("El nombre de la categoría no puede estar vacío.")
+    try:
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO categorias (nombre) VALUES (?);",
+            (nombre_limpio,)
+        )
+        conn.commit()
+        conn.close()
+    except sqlite3.IntegrityError:
+        raise ValueError(f"La categoría '{nombre_limpio}' ya existe.")
+    except sqlite3.Error as e:
+        raise RuntimeError(f"Error al crear categoría: {e}")
+
 
 def obtener_materiales(categoria: str = None, nombre: str = None) -> list[sqlite3.Row]:
     """
@@ -280,6 +337,39 @@ def marcar_prestamo_no_devuelto(prestamo_id: int) -> None:
         raise RuntimeError(f"Error al marcar préstamo como no devuelto: {e}")
 
 
+def obtener_todos_los_prestamos(filtro_estado: str = None, busqueda: str = None) -> list[sqlite3.Row]:
+    """
+    Retorna el historial completo de préstamos (activos, devueltos y no devueltos).
+    Soporta filtros parametrizados por estado y por término de búsqueda.
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        query = """
+            SELECT p.id, m.nombre AS material, p.alumno_nombre,
+                   p.curso_division, p.fecha_salida, p.fecha_devolucion, p.estado
+            FROM prestamos p
+            JOIN materiales m ON p.material_id = m.id
+            WHERE 1=1
+        """
+        params = []
+        if filtro_estado and filtro_estado != "Todos":
+            query += " AND p.estado = ?"
+            params.append(filtro_estado)
+        if busqueda:
+            query += " AND (m.nombre LIKE ? OR p.alumno_nombre LIKE ? OR p.curso_division LIKE ?)"
+            patron = f"%{busqueda.strip()}%"
+            params.extend([patron, patron, patron])
+
+        query += " ORDER BY p.fecha_salida DESC;"
+        cursor.execute(query, params)
+        prestamos = cursor.fetchall()
+        conn.close()
+        return prestamos
+    except sqlite3.Error as e:
+        raise RuntimeError(f"Error al obtener historial de préstamos: {e}")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # HISTORIAL DE BAJAS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -344,3 +434,43 @@ def obtener_historial_bajas() -> list[sqlite3.Row]:
         return bajas
     except sqlite3.Error as e:
         raise RuntimeError(f"Error al obtener historial de bajas: {e}")
+
+
+def revertir_baja(baja_id: int) -> None:
+    """
+    Anula un registro de baja y reintegra automáticamente las unidades
+    al stock_total y stock_disponible del material en una única transacción (solo ADMIN).
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Obtener los datos de la baja a revertir
+        cursor.execute(
+            "SELECT material_id, cantidad FROM historial_bajas WHERE id = ?;",
+            (baja_id,)
+        )
+        baja = cursor.fetchone()
+        if not baja:
+            conn.close()
+            raise ValueError("El registro de baja no existe o ya fue anulado.")
+
+        material_id = baja["material_id"]
+        cantidad = baja["cantidad"]
+
+        # Reintegrar stock y eliminar registro en transacción atómica
+        cursor.execute(
+            """UPDATE materiales
+               SET stock_total      = stock_total      + ?,
+                   stock_disponible = stock_disponible + ?
+               WHERE id = ?;""",
+            (cantidad, cantidad, material_id)
+        )
+        cursor.execute(
+            "DELETE FROM historial_bajas WHERE id = ?;",
+            (baja_id,)
+        )
+        conn.commit()
+        conn.close()
+    except sqlite3.Error as e:
+        raise RuntimeError(f"Error al revertir baja: {e}")
