@@ -43,5 +43,9 @@ La integración de AntiGravity permite acelerar drásticamente el flujo de desar
 
 1. **Clonar el repositorio:**
    ```bash
-   git clone [https://github.com/TU_USUARIO/NOMBRE_REPOSOTORIO.git](https://github.com/TU_USUARIO/NOMBRE_REPOSOTORIO.git)
-   cd NOMBRE_REPOSOTORIO
+   git clone https://github.com/BauBarbero/gestor-materiales.git
+   cd gestor-materiales
+
+1. **Instalar dependencias:**
+   ```bash
+   pip install -r gestionefi/requirements.txt
